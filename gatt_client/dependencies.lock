@@ -1,0 +1,16 @@
+dependencies:
+  idf:
+    source:
+      type: idf
+    version: 6.0.2
+  lvgl:
+    dependencies: []
+    source:
+      path: ../tft/managed_components/lvgl__lvgl
+      type: local
+    version: 9.3.0
+direct_dependencies:
+- lvgl/lvgl
+manifest_hash: c9c72ef013721ee76c6c09a8940e4598afebdfcf164987a3f64a65908a06b214
+target: esp32
+version: 3.0.0

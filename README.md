@@ -1,91 +1,125 @@
-# ESP32 BLE GATT 服务表（门铃从设备）示例
+# ESP32_EVA_DoorBell — ESP32 智能门铃系统
 
-基于 ESP-IDF 官方 [gatt_server_service_table](https://github.com/espressif/esp-idf/tree/master/examples/bluetooth/bluedroid/ble/gatt_server_service_table) 示例改造而成的 **BLE GATT 服务端（门铃从设备）** 工程。
+由 **两部 ESP32** 组成的低功耗智能门铃：
+按下室外门铃端的按键，室内主机会播放门铃语音并在屏幕上显示敲门动画。
 
-核心思想：使用 **GATT 属性表（Attribute Table）** 一次性定义全部服务与特征，通过 `esp_ble_gatts_create_attr_tab()` 创建，避免像 BLUEDROID 传统方式那样逐条添加属性。本工程在其基础上增加了：
+- **门铃从机**（`gatt_server_service_table/`）：安装在门外的门铃端，电池/低功耗供电。
+  平时深睡眠省电，按键唤醒后开启 BLE 广播，通过 GATT 通知把"门铃事件"发给主机。
+- **门铃主机**（`gatt_client/`）：安装在室内的显示端（ESP32-WROOM-32），
+  作为 BLE 中心设备自动连接从机，收到通知后从 SD 卡播放音频（I2S）并在 ST7735 屏上显示动画。
 
-- **门铃按键逻辑**：GPIO33 按键（高电平有效）
-- **低功耗管理**：广播超时 / 客户端断开后自动进入深睡眠，按键唤醒
-- **按键防抖与误唤醒过滤**：唤醒后延时 50ms 确认按键仍按下，否则重新入睡
-
-> 官方英文版教程见 [tutorial/Gatt_Server_Service_Table_Example_Walkthrough.md](tutorial/Gatt_Server_Service_Table_Example_Walkthrough.md)。
-
-## 功能特性
-
-| 特性 | 说明 |
-| --- | --- |
-| GATT 服务 | 服务 UUID `0x00FF`，含 3 个特征：A（`0xFF01`，读/写/通知）、B（`0xFF02`，读）、C（`0xFF03`，写） |
-| 属性表 | `gatt_db[]` 一次性定义全部属性，`ESP_GATTS_CREAT_ATTR_TAB_EVT` 回调中获取句柄并启动服务 |
-| 门铃通知 | 客户端使能 CCCD 通知后，服务器发送 4 字节通知数据，其中字节 1 为 GPIO33 按键实时状态 |
-| 深睡眠 | 广播 30 秒无连接、连接断开、或初始化失败时，关闭 BLE 栈并进入深睡眠；GPIO33 高电平唤醒 |
-| 按键防抖 | 唤醒后延时 50ms 校验按键电平，误唤醒自动回到深睡眠 |
-| 广播 | 使用 RAW 广播数据（`ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT`），设备名 `ESP_GATTS_DEMO` |
-| 其他 | 本地 MTU 500，发射功率 +9 dBm，支持 Prepare Write（长写） |
-
-## 硬件要求
-
-- 支持 BLE 的 ESP32 系列开发板（ESP32 / C2 / C3 / S3 均已提供 `sdkconfig.defaults`）
-- 按键接 **GPIO33**：按下为高电平，使用片内下拉（代码已配置 GPIO 内部下拉）
-- 烧录用 USB 串口线
-
-## 构建与烧录
-
-```bash
-# 1. 加载 ESP-IDF 环境（以 ESP-IDF v6.0.2 为例）
-source $IDF_PATH/export.sh        # 或 source ~/.espressif/v6.0.2/esp-idf/export.sh
-
-# 2. 选择目标芯片（按实际硬件选择）
-idf.py set-target esp32           # esp32c2 / esp32c3 / esp32s3 ...
-
-# 3. 编译
-idf.py build
-
-# 4. 烧录并监视串口
-idf.py -p /dev/ttyUSB0 -b 115200 flash monitor
-```
-
-> 本机（WSL2 + USB 串口直通）烧录请固定使用 `-b 115200` 波特率，详见工作环境说明。
-
-## 使用说明（门铃工作流程）
-
-1. 上电后设备初始化 BLE 并开始广播（设备名 `ESP_GATTS_DEMO`）
-2. 手机使用 nRF Connect 等 BLE 工具连接设备
-3. 在特征 A（`0xFF01`）上**使能通知（CCCD 写 `0x0100`）**
-4. 服务器立即发送通知：`[0x01, 按键状态, 0x00, 0x00]`
-5. 此时按下 GPIO33 按键，再次发送通知，客户端即可收到带按键状态的数据
-6. 断开连接或广播 30 秒无人连接，设备自动进入深睡眠；再按一下按键即可唤醒重启
+两个目录是**相互独立**的 ESP-IDF 工程，各自拥有自己的 `sdkconfig` 与固件，分开编译、分开烧录。
 
 ## 目录结构
 
 ```
-gatt_server_service_table/
-├── CMakeLists.txt                  # 工程构建配置
-├── README.md                       # 本说明文件
-├── sdkconfig.defaults              # 通用配置默认值
-├── sdkconfig.defaults.esp32c2      # ESP32-C2 配置默认值
-├── sdkconfig.defaults.esp32c3      # ESP32-C3 配置默认值
-├── sdkconfig.defaults.esp32s3      # ESP32-S3 配置默认值
-├── main/
-│   ├── CMakeLists.txt              # 组件构建配置（依赖 bt/nvs_flash/esp_driver_gpio/esp_timer）
-│   ├── gatts_table_creat_demo.c    # 全部源码：GATT 服务表、门铃逻辑、深睡眠管理
-│   └── gatts_table_creat_demo.h    # 属性索引枚举等声明
-└── tutorial/
-    └── Gatt_Server_Service_Table_Example_Walkthrough.md  # 官方英文教程
+ESP32_EVA_DoorBell/
+├── README.md                           # 本文件：整个项目的工作流程说明
+├── gatt_server_service_table/          # 门铃从机工程（BLE GATT 服务表 + 低功耗）
+│   ├── main/                           # 源码：属性表、门铃逻辑、深睡眠
+│   ├── sdkconfig.defaults*             # 各芯片配置默认值
+│   └── README.md                       # 从机详细说明
+└── gatt_client/                        # 门铃主机工程（BLE 中心 + 音频/显示）
+    ├── main/                           # 源码：GATT 客户端、媒体播放（SD/I2S/LVGL）
+    ├── components/                     # 自带组件（LVGL 等）
+    └── README.md                       # 主机详细说明
 ```
 
-## 关键代码位置
+## 系统组成
 
-| 功能 | 位置 |
+| 部件 | 硬件 | 职责 |
+| --- | --- | --- |
+| 门铃从机 | ESP32 开发板 + GPIO33 按键（高电平有效，片内下拉） | 低功耗待机、按键唤醒、BLE 广播、发门铃通知 |
+| 门铃主机 | ESP32-WROOM-32 + ST7735 屏（128×160，LVGL 9.3.0）+ I2S 功放（如 MAX98357A）+ FAT32 SD 卡 | 自动连接从机、播放 SD 音频、显示 GIF 动画、本地按键/串口触发 |
+
+SD 卡根目录需放置：`idle.gif`（待机动画）、`knock.gif`（敲门动画）、`doorbell.wav`（门铃语音，16 位 PCM WAV）。
+
+## 总体工作流程
+
+```text
+┌────────────────────┐                                  ┌────────────────────┐
+│  门铃端（从机）      │                                  │  室内端（主机）      │
+│  gatt_server_...   │                                  │  gatt_client       │
+└─────────┬──────────┘                                  └─────────┬──────────┘
+          │                                                       │
+          │ ① 深睡眠待机（省电）                                    │ ① 上电: 初始化屏幕/SD/LVGL
+          │                                                       │    播放 idle.gif 待机动画
+          │ ② 有人按 GPIO33 按键 ──唤醒──> BLE 初始化               │ ② 初始化 BLE 主机
+          │    并开始广播 (ESP_GATTS_DEMO)                         │
+          │                                                       │ ③ 扫描到从机
+          │                     ◄────── 连接 ──────                │    建立 BLE 连接
+          │                                                       │ ④ 发现服务 0x00FF
+          │ ③ 订阅使能 (CCCD 写 0x0100)                            │    订阅特征 0xFF01 通知
+          │    立即发送通知 [0x01, 按键状态, 0, 0] ────►            │ ⑤ 收到通知 (首字节 0x01)
+          │                                                       │    播放 knock.gif ×2
+          │ ④ 断开/超时 ──关闭BLE──> 回到深睡眠                     │    + doorbell.wav(I2S)
+          │                                                       │ ⑥ 播放结束 → 恢复 idle.gif
+          │                                                       │ ⑦ 断开 → 重新扫描连接
+          └──────────────────────────────────────────────────────────────┘
+```
+
+### 逐步说明
+
+1. **从机低功耗待机**：门铃端平时处于深睡眠（RTC 外设 + GPIO33 高电平唤醒），耗电极低。
+2. **按键唤醒**：按下门铃按键，从机被 GPIO33 唤醒；经 50ms 防抖确认后初始化 BLE 并开始广播。
+3. **主机自动连接**：室内主机开机后初始化屏幕、SD 卡、LVGL 并播放待机动画，同时启动 BLE 扫描，
+   发现广播名为 `ESP_GATTS_DEMO` 的从机后自动连接。
+4. **订阅通知**：主机搜索服务 `0x00FF` 和通知特征 `0xFF01`，写入 CCCD 使能从机通知。
+5. **门铃触发通知**：从机在通知使能后立即上报一次按键状态；
+   之后每次按下 GPIO33 按键都会发送 4 字节通知 `[0x01, 电平, 0x00, 0x00]`。
+6. **主机响应**：收到首字节为 `0x01` 的通知后，媒体任务从 SD 卡读取 `doorbell.wav` 经 I2S 播放，
+   同时循环播放两轮 `knock.gif`；两者结束后恢复 `idle.gif` 待机动画。
+7. **回到待机**：BLE 断开后，从机关闭蓝牙栈回到深睡眠；主机继续扫描并等待下一次连接。
+
+### 主机端的本地触发（调试/备用）
+
+除 BLE 门铃通知外，主机还支持两种本地触发方式，便于无门铃端时调试：
+
+- **GPIO15 按键**：按下（高电平，50ms 软件防抖）触发门铃音频 + 敲门动画
+- **串口触发**：在串口监视器输入任意字符即触发门铃音频 + 敲门动画
+
+## BLE 协议约定
+
+| 项目 | 值 |
 | --- | --- |
-| GATT 属性表定义 | `main/gatts_table_creat_demo.c` 中 `gatt_db[]` |
-| 服务/特征 UUID | 服务 `0x00FF`，特征 `0xFF01/0xFF02/0xFF03` |
-| 门铃通知发送 | `ESP_GATTS_WRITE_EVT` 中 CCCD 写处理分支 |
-| 深睡眠入口 | `enter_deep_sleep()` / `deep_sleep_task()` |
-| 按键唤醒与防抖 | `app_main()` 中 `ESP_SLEEP_WAKEUP_EXT0` 分支 |
-| 广播超时回睡 | `adv_timeout_cb()` |
+| 从机广播设备名 | `ESP_GATTS_DEMO` |
+| 服务 UUID | `0x00FF` |
+| 通知特征 UUID | `0xFF01`（读/写/通知） |
+| 通知数据 | `[0x01, GPIO33 电平, 0x00, 0x00]`（首字节 `0x01` = 门铃触发） |
+| 射频功率 | 广播与链路均 +9 dBm |
 
-## 注意事项
+## 构建与烧录
 
-- `sdkconfig` 为各目标芯片编译生成的文件，不入库；芯片相关配置在 `sdkconfig.defaults.*` 中维护
-- 修改按键引脚需同步修改 `GPIO_BUTTON` 宏与 `esp_sleep_enable_ext0_wakeup()` 的引脚参数
-- 本工程仅支持 BLE，开机会调用 `esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT)` 释放经典蓝牙内存
+两个工程完全独立，分开编译：
+
+```bash
+# 通用环境（ESP-IDF v6.0.2）
+source /home/sk/.espressif/v6.0.2/esp-idf/export.sh
+
+# —— 门铃从机 ——
+cd gatt_server_service_table
+idf.py set-target esp32 && idf.py build
+idf.py -p /dev/ttyUSB0 -b 115200 flash monitor
+
+# —— 门铃主机 ——
+cd ../gatt_client
+idf.py set-target esp32 && idf.py build
+idf.py -p /dev/ttyUSB0 -b 115200 flash monitor
+```
+
+> 注意：两个工程使用同一条串口时，需先烧录一台再切换到另一台；
+> 从机与主机是两块不同的 ESP32 电路板。
+> WSL2 + USB 串口直通环境请固定 `-b 115200` 波特率。
+
+## 联调步骤
+
+1. 主机 SD 卡放入 `idle.gif`、`knock.gif`、`doorbell.wav`（FAT32），上电预计先显示待机动画
+2. 从机上电（或短按按键唤醒），主机日志出现 `Connected` 与 `Notification register successfully`
+3. 按下门铃端 GPIO33 按键 → 主机播放敲门动画与门铃音 → 结束后回到待机动画
+4. 观察从机串口：断开后应打印 `Entering deep sleep...`，再按按键可唤醒重启
+
+## 环境与版本
+
+- ESP-IDF **v6.0.2**（ESP32 rev v3.1，2MB flash）
+- 开发环境：WSL2 + USB 串口直通（CP210x，`/dev/ttyUSB0`）
+- 主机图形库：LVGL 9.3.0（`components/lvgl`）
