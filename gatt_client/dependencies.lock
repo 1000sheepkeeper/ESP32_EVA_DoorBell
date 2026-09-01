@@ -3,14 +3,15 @@ dependencies:
     source:
       type: idf
     version: 6.0.2
-  lvgl:
+  lvgl/lvgl:
+    component_hash: b702d642e03e95928046d5c6726558e6444e112420c77efa5fdb6650b0a13c5d
     dependencies: []
     source:
-      path: ../tft/managed_components/lvgl__lvgl
-      type: local
+      registry_url: https://components.espressif.com/
+      type: service
     version: 9.3.0
 direct_dependencies:
 - lvgl/lvgl
-manifest_hash: c9c72ef013721ee76c6c09a8940e4598afebdfcf164987a3f64a65908a06b214
+manifest_hash: 3ad46208cec8a623ffa922d1ebd1e58a2fa6d572a955a5efeba725214b0e14ed
 target: esp32
 version: 3.0.0
